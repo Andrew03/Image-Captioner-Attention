@@ -23,47 +23,42 @@ def to_var(x, useCuda=True, volatile=False):
     x = x.cuda()
   return autograd.Variable(x, volatile=volatile)
 
-def evaluate(images, captions, lengths, encoder_cnn, decoder_rnn, loss_function, useCuda=True, volatile=False):
+def evaluate(images, captions, encoder_cnn, decoder_rnn, loss_function, useCuda=True, volatile=False):
   images = to_var(images, useCuda, volatile)
   features = encoder_cnn(images)
-  targets = to_var(captions, useCuda, volatile)
-  predictions = decoder_rnn(features, targets[:,:-1], [l - 1 for l in lengths])
-  predictions = pack_padded_sequence(predictions, [l - 1 for l in lengths], batch_first=True)[0]
-  targets = pack_padded_sequence(targets[:, 1:], [l - 1 for l in lengths], batch_first=True)[0]
+  inputs = to_var(captions, useCuda, volatile)[:, :-1]
+  targets = to_var(captions[:, 1:], useCuda, volatile)
+  len_targets = len(targets[0])
+  targets = pack_padded_sequence(targets, [len_targets for i in range(len(captions))], batch_first=True)[0]
+  predictions, _ = decoder_rnn(features, inputs)
+  predictions = pack_padded_sequence(predictions, [len(predictions[i]) for i in range(len(predictions))], batch_first=True)[0]
   loss = loss_function(predictions, targets)
   return loss
 
-def train(images, captions, lengths, encoder_cnn, decoder_rnn, loss_function, optimizer, useCuda):
-  loss = evaluate(images, captions, lengths, encoder_cnn, decoder_rnn, loss_function, useCuda)
+def train(images, captions, encoder_cnn, decoder_rnn, loss_function, optimizer, useCuda):
+  loss = evaluate(images, captions, encoder_cnn, decoder_rnn, loss_function, useCuda)
   loss.backward()
   optimizer.step()
   return loss
 
-# def validate(val_loader, encoder_cnn, decoder_rnn, loss_function, useCuda, iter_number, return_index, return_value):
 def validate(val_loader, encoder_cnn, decoder_rnn, loss_function, useCuda):
-  #decoder_rnn = decoder_rnn.copy()
   sum_loss = 0
-  for i, (images, captions, lengths, ids) in enumerate(val_loader, 1):
-    loss = evaluate(images, captions, lengths, encoder_cnn, decoder_rnn, loss_function, useCuda, volatile=False)
+  for i, (images, captions, ids) in enumerate(val_loader, 1):
+    loss = evaluate(images, captions, encoder_cnn, decoder_rnn, loss_function, useCuda, volatile=False)
     sum_loss += loss.data.select(0, 0)
     if i == 100:
       break
   return sum_loss / 100
-  # return_index.value = iter_number
-  # return_value.value = sum_loss / 100
 
-# def validate_full(val_loader, encoder_cnn, decoder_rnn, loss_function, useCuda, epoch, num_epochs, len_train_loader, return_index, return_value):
 def validate_full(val_loader, encoder_cnn, decoder_rnn, loss_function, useCuda, epoch, num_epochs):
   decoder_rnn = decoder_rnn.copy()
   progress_bar = tqdm(iterable=val_loader, desc='Epoch [%i/%i] (Val)' %(epoch, num_epochs), position=1)
   sum_loss = 0
-  for i, (images, captions, lengths, ids) in enumerate(progress_bar):
-    loss = evaluate(images, captions, lengths, encoder_cnn, decoder_rnn, loss_function, useCuda, volatile=False)
+  for i, (images, captions, ids) in enumerate(progress_bar):
+    loss = evaluate(images, captions, encoder_cnn, decoder_rnn, loss_function, useCuda, volatile=False)
     sum_loss += loss.data.select(0, 0)
     progress_bar.set_postfix(loss=sum_loss / (i if i > 0 else 1))
   return sum_loss / len(val_loader)
-  # return_index.value = (epoch + 1) * len_train_loader
-  # return_value.value = sum_loss / len(val_loader)
 
 def main(args):
   transform = transforms.Compose([
@@ -114,7 +109,7 @@ def main(args):
     progress_bar = tqdm(iterable=batched_train_loader, desc='Epoch [%i/%i] (Train)' %(epoch, args.num_epochs))
     train_sum_loss = 0
     for i, (images, captions, lengths, ids) in enumerate(progress_bar, 1):
-      loss = train(images, captions, lengths, encoder_cnn, decoder_rnn, loss_function, optimizer, useCuda)
+      loss = train(images, captions, encoder_cnn, decoder_rnn, loss_function, optimizer, useCuda)
       train_sum_loss += loss.data.select(0, 0)
       progress_bar.set_postfix(loss=train_sum_loss/((i % 100) + 1))
       if i % 100 == 0:
@@ -127,7 +122,7 @@ def main(args):
     output_train_file.write("%d, %5.4f\n" %((epoch + 1) * len(batched_train_loader), train_sum_loss / len(batched_train_loader) / 100))
 
     for i, (images, captions, lengths, ids) in enumerate(batched_val_loader_full, 1):
-      loss = evaluate(images, captions, lengths, encoder_cnn, decoder_rnn, loss_function, optimizer, useCuda)
+      loss = evaluate(images, captions, encoder_cnn, decoder_rnn, loss_function, optimizer, useCuda)
       val_sum_loss += loss.data.select(0, 0)
       progress_bar.set_postfix(loss=val_sum_loss/i)
     output_val_file.write("%d, %5.4f\n" %((epoch + 1) * len(batched_train_loader), val_sum_loss))

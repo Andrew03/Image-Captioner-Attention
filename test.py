@@ -48,6 +48,4 @@ for i, (images, captions, lengths, ids) in enumerate(batched_train_loader):
   print("initial features size: " + str(features.size()))
   out, hidden = decoder(features, captions)
   print(out.size())
-  print(hidden[0].size())
-
-  #predictions = decoder(features, captions[:,:-1], [l - 1 for l in lengths])
+  print(hidden.size())
