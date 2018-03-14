@@ -38,8 +38,10 @@ class DecoderRNN(nn.Module):
 
     self.init_h = nn.Linear(vis_dim, hidden_dim, bias=False)
     self.init_c = nn.Linear(vis_dim, hidden_dim, bias=False)
-    self.attn_vw = nn.Linear(vis_dim, 1, bias=False)
-    self.attn_hw = nn.Linear(hidden_dim, 1, bias=False)
+    # self.attn_vw = nn.Linear(vis_dim, 1, bias=False)
+    # self.attn_hw = nn.Linear(hidden_dim, 1, bias=False)
+    self.attn_vw = nn.Linear(vis_dim, 1)
+    self.attn_hw = nn.Linear(hidden_dim, 1)
 
     self.embed = nn.Embedding(vocab_size, embed_dim)
     self.lstm = nn.LSTM(vis_dim + embed_dim, hidden_dim)
@@ -51,22 +53,38 @@ class DecoderRNN(nn.Module):
     return hidden.unsqueeze(0), cell.unsqueeze(0)
 
   def _compute_attention(self, features, hidden_state):
+    """
+    features: B x vis_num x vis_dim
+    hidden_state: (1 x B x hidden_size, 1 x B x hidden_size)
+    """
+    # B x vis_num x 1
     att_vw = self.attn_vw(features)
-    att_hw = self.attn_hw(hidden_state.squeeze(0)).unsqueeze(1)
-    attention = att_vw + att_hw.repeat(1, self.vis_num, 1)
+    # B x vis_num x 1
+    att_hw = self.attn_hw(hidden_state.transpose(0, 1).repeat(1, self.vis_num, 1))
+    # B x vis_num x 1
+    attention = att_vw + att_hw
     attention_softmax = F.softmax(attention, dim=1)
+    # B x vis_dim
     return torch.sum(features * attention_softmax, 1)
 
 
   def forward(self, features, captions):
+    """
+    features: B x vis_num x vis_dim
+    captions: B x seq_length
+    """
     hidden = self._init_hidden(features)
     word_embeddings = self.embed(captions)
+    # seq_length x B x embedding_dim
     word_embeddings = word_embeddings.transpose(0, 1)
     word_space = None
     for i, embedding in enumerate(word_embeddings):
+      # B x vis_dim
       attention = self._compute_attention(features, hidden[0])
       input = torch.cat([attention, embedding], 1).unsqueeze(0)
+      # print(input.size())
       out, hidden = self.lstm(input, hidden)
-      words = self.output(out)
+      # words = self.output(out)
+      words = self.output(hidden[0])
       word_space = torch.cat([word_space, words], 0) if word_space is not None else words
     return F.log_softmax(word_space, dim=2), F.softmax(word_space, dim=2)

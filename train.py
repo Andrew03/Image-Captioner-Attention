@@ -43,7 +43,7 @@ def train(images, captions, encoder_cnn, decoder_rnn, loss_function, optimizer, 
 
 def validate(val_loader, encoder_cnn, decoder_rnn, loss_function, useCuda):
   sum_loss = 0
-  for i, (images, captions, ids) in enumerate(val_loader, 1):
+  for i, (images, captions, lengths, ids) in enumerate(val_loader, 1):
     loss = evaluate(images, captions, encoder_cnn, decoder_rnn, loss_function, useCuda, volatile=False)
     sum_loss += loss.data.select(0, 0)
     if i == 100:
@@ -54,7 +54,7 @@ def validate_full(val_loader, encoder_cnn, decoder_rnn, loss_function, useCuda, 
   decoder_rnn = decoder_rnn.copy()
   progress_bar = tqdm(iterable=val_loader, desc='Epoch [%i/%i] (Val)' %(epoch, num_epochs), position=1)
   sum_loss = 0
-  for i, (images, captions, ids) in enumerate(progress_bar):
+  for i, (images, captions, lengths, ids) in enumerate(progress_bar):
     loss = evaluate(images, captions, encoder_cnn, decoder_rnn, loss_function, useCuda, volatile=False)
     sum_loss += loss.data.select(0, 0)
     progress_bar.set_postfix(loss=sum_loss / (i if i > 0 else 1))
@@ -110,6 +110,7 @@ def main(args):
     train_sum_loss = 0
     for i, (images, captions, lengths, ids) in enumerate(progress_bar, 1):
       loss = train(images, captions, encoder_cnn, decoder_rnn, loss_function, optimizer, useCuda)
+      # tqdm.write(str(loss.data.select(0, 0)))
       train_sum_loss += loss.data.select(0, 0)
       progress_bar.set_postfix(loss=train_sum_loss/((i % 100) + 1))
       if i % 100 == 0:
@@ -121,6 +122,7 @@ def main(args):
     # end of batch
     output_train_file.write("%d, %5.4f\n" %((epoch + 1) * len(batched_train_loader), train_sum_loss / len(batched_train_loader) / 100))
 
+    val_sum_loss = 0
     for i, (images, captions, lengths, ids) in enumerate(batched_val_loader_full, 1):
       loss = evaluate(images, captions, encoder_cnn, decoder_rnn, loss_function, optimizer, useCuda)
       val_sum_loss += loss.data.select(0, 0)
