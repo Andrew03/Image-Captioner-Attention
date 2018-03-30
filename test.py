@@ -6,6 +6,7 @@ from torch.autograd import Variable
 from build_vocab import Vocabulary
 from batch_data import BatchedData
 from batched_data_loader import get_loader
+from pycocotools.coco import COCO
 
 def to_var(x, useCuda=True, volatile=False):
   if torch.cuda.is_available() and useCuda:
@@ -21,13 +22,14 @@ transform = transforms.Compose([
     std=[0.229, 0.224, 0.225])
 ])
 
-with open("../ImageCaptioner/data/vocab/vocab_occurrence_5.pkl", 'rb') as f1, \
-     open("data/batched_data/train_batch_32_size_4000.pkl", 'rb') as f2:
+with open("../ImageCaptioner/data/vocab/vocab_occurrence_5.pkl", 'rb') as f1,\
+    open("../ImageCaptioner/data/batched_data/val_batch_1.pkl", "rb") as f2:
        vocab = pickle.load(f1)
-       batched_train_set = pickle.load(f2)
-batched_train_loader = get_loader("../ImageCaptioner/data/train2014",
-                                  "../ImageCaptioner/data/annotations/captions_train2014.json",
-                                  batched_train_set,
+       batched_val_set = pickle.load(f2)
+coco_caps = COCO("../ImageCaptioner/data/annotations/captions_val2014.json")
+batched_val_loader = get_loader("../ImageCaptioner/data/val2014",
+                                  "../ImageCaptioner/data/annotations/captions_val2014.json",
+                                  batched_val_set,
                                   vocab,
                                   transform,
                                   shuffle=True,
@@ -38,14 +40,22 @@ decoder = model.DecoderRNN(512, 196, 512, 512, len(vocab), 1)
 if torch.cuda.is_available():
   encoder = encoder.cuda()
   decoder = decoder.cuda()
-features = []
-for i, (images, captions, lengths, ids) in enumerate(batched_train_loader):
+
+checkpoint = torch.load("noNorm/model_batch_100_dims_512x512_lr_0.0001/checkpoint_25.pt")
+decoder.load_state_dict(checkpoint['state_dict'])
+checkpoint = None
+torch.cuda.empty_cache()
+
+for i, (images, captions, lengths, ids) in enumerate(batched_val_loader):
   if i == 1:
     break
+  print("actual captions are: ")
+  annIds = coco_caps.getAnnIds(imgIds=ids)
+  anns = coco_caps.loadAnns(annIds)
+  for ann in anns:
+    print(ann['caption'])
   images = to_var(images, volatile=True)
   captions = to_var(captions, volatile=True)
   features = encoder(images)
-  # print("initial features size: " + str(features.size()))
-  out, hidden = decoder(features, captions)
-  # print(out.size())
-  # print(hidden.size())
+  caption, _ = decoder.sample(features)
+  print(caption)

@@ -31,18 +31,19 @@ def evaluate(images, captions, encoder_cnn, decoder_rnn, loss_function, useCuda=
   len_targets = len(targets[0])
   targets = pack_padded_sequence(targets, [len_targets for i in range(len(captions))], batch_first=True)[0]
   predictions, _ = decoder_rnn(features, inputs)
-  predictions = pack_padded_sequence(predictions, [len(predictions[i]) for i in range(len(predictions))], batch_first=True)[0]
   loss = loss_function(predictions, targets)
   return loss
 
-def train(images, captions, encoder_cnn, decoder_rnn, loss_function, optimizer, useCuda):
+def train(images, captions, encoder_cnn, decoder_rnn, loss_function, optimizer, grad_clip, useCuda):
+  decoder_rnn.zero_grad()
   loss = evaluate(images, captions, encoder_cnn, decoder_rnn, loss_function, useCuda)
   loss.backward()
+  nn.utils.clip_grad_norm(decoder_rnn.parameters(), grad_clip)
   optimizer.step()
   return loss
 
 def validate(val_loader, encoder_cnn, decoder_rnn, loss_function, useCuda):
-  sum_loss = 0
+  sum_loss = 0.0
   for i, (images, captions, lengths, ids) in enumerate(val_loader, 1):
     loss = evaluate(images, captions, encoder_cnn, decoder_rnn, loss_function, useCuda, volatile=False)
     sum_loss += loss.data.select(0, 0)
@@ -53,7 +54,7 @@ def validate(val_loader, encoder_cnn, decoder_rnn, loss_function, useCuda):
 def validate_full(val_loader, encoder_cnn, decoder_rnn, loss_function, useCuda, epoch, num_epochs):
   decoder_rnn = decoder_rnn.copy()
   progress_bar = tqdm(iterable=val_loader, desc='Epoch [%i/%i] (Val)' %(epoch, num_epochs), position=1)
-  sum_loss = 0
+  sum_loss = 0.0
   for i, (images, captions, lengths, ids) in enumerate(progress_bar):
     loss = evaluate(images, captions, encoder_cnn, decoder_rnn, loss_function, useCuda, volatile=False)
     sum_loss += loss.data.select(0, 0)
@@ -92,8 +93,8 @@ def main(args):
   params = list(decoder_rnn.parameters())
   optimizer = optim.Adam(params, lr=args.lr)
 
-  output_train_file = open(args.output_train_name, 'w')
-  output_val_file = open(args.output_val_name, 'w')
+  output_train_file = open(args.output_dir + "/train_" + str(args.num_epochs) + ".txt", 'w')
+  output_val_file = open(args.output_dir + "/val_" + str(args.num_epochs) + ".txt", 'w')
   start_epoch = 0
 
   if args.load_checkpoint is not None:
@@ -109,8 +110,7 @@ def main(args):
     progress_bar = tqdm(iterable=batched_train_loader, desc='Epoch [%i/%i] (Train)' %(epoch, args.num_epochs))
     train_sum_loss = 0
     for i, (images, captions, lengths, ids) in enumerate(progress_bar, 1):
-      loss = train(images, captions, encoder_cnn, decoder_rnn, loss_function, optimizer, useCuda)
-      # tqdm.write(str(loss.data.select(0, 0)))
+      loss = train(images, captions, encoder_cnn, decoder_rnn, loss_function, optimizer, args.grad_clip, useCuda)
       train_sum_loss += loss.data.select(0, 0)
       progress_bar.set_postfix(loss=train_sum_loss/((i % 100) + 1))
       if i % 100 == 0:
@@ -118,21 +118,22 @@ def main(args):
         train_sum_loss = 0
         if i % 1000 == 0:
           temp_loss = validate(batched_val_loader, encoder_cnn, decoder_rnn, loss_function, useCuda)
-          output_val_file.write("%d, %5.4f\n" %(i, temp_loss))
+          output_val_file.write("%d, %5.4f\n" %(epoch * len(batched_train_loader) + i, temp_loss))
     # end of batch
     output_train_file.write("%d, %5.4f\n" %((epoch + 1) * len(batched_train_loader), train_sum_loss / len(batched_train_loader) / 100))
 
     val_sum_loss = 0
-    for i, (images, captions, lengths, ids) in enumerate(batched_val_loader_full, 1):
+    val_progress_bar = tqdm(iterable=batched_val_loader_full, desc='Epoch [%i/%i] (Val)' %(epoch, args.num_epochs))
+    for i, (images, captions, lengths, ids) in enumerate(val_progress_bar, 1):
       loss = evaluate(images, captions, encoder_cnn, decoder_rnn, loss_function, optimizer, useCuda)
       val_sum_loss += loss.data.select(0, 0)
-      progress_bar.set_postfix(loss=val_sum_loss/i)
-    output_val_file.write("%d, %5.4f\n" %((epoch + 1) * len(batched_train_loader), val_sum_loss))
+      val_progress_bar.set_postfix(loss=val_sum_loss/i)
+    output_val_file.write("%d, %5.4f\n" %((epoch + 1) * len(batched_train_loader), val_sum_loss / len(batched_val_loader_full)))
 
     torch.save({'epoch': epoch + 1,
                 'state_dict': decoder_rnn.state_dict(),
                 'optimizer': optimizer.state_dict()},
-                "checkpoint_" + str(epoch + 1) + ".pt")
+                args.output_dir + "/checkpoint_" + str(epoch + 1) + ".pt")
 
   output_train_file.close()
   output_val_file.close()
@@ -146,8 +147,8 @@ if __name__ == '__main__':
                       default='../ImageCaptioner/data/train2014',
                       help='Path to train image directory. Default value of ../ImageCaptioner/data/train2014')
   parser.add_argument('--batched_train_path', type=str,
-                      default='./data/batched_data/train_batch_32_size_4000.pkl',
-                      help='Path to batched train data file. Default value of ./data/batched_data/train_batch_32_size_4000.pkl')
+                      default='../ImageCaptioner/data/batched_data/train_batch_100.pkl',
+                      help='Path to batched train data file. Default value of ../ImageCaptioner/data/batched_data/train_batch_100.pkl')
   parser.add_argument('--val_caption_path', type=str,
                       default='../ImageCaptioner/data/annotations/captions_val2014.json',
                       help='Path for val annotation file. Default value of ../ImageCaptioner/data/annotations/captions_val2014.json')
@@ -155,17 +156,22 @@ if __name__ == '__main__':
                       default='../ImageCaptioner/data/val2014',
                       help='Path to val image directory. Default value of ../ImageCaptioner/data/val2014')
   parser.add_argument('--batched_val_path', type=str,
-                      default='./data/batched_data/val_batch_32_size_4000.pkl',
-                      help='Path to batched val data file. Default value of ./data/batched_data/val_batch_32_size_4000.pkl')
+                      default='../ImageCaptioner/data/batched_data/val_batch_100.pkl',
+                      help='Path to batched val data file. Default value of ../ImageCaptioner/data/batched_data/val_batch_100.pkl')
   parser.add_argument('--vocab_path', type=str,
+                      default='../ImageCaptioner/data/vocab/vocab_occurrence_5.pkl',
+                      help='Path to vocab. Default value of ../ImageCaptioner/data/vocab/vocab_occurrence_5.pkl')
+  parser.add_argument('--output_dir', type=str,
                       required=True,
-                      help='Path to vocab. Required')
+                      help='Output directory. Required')
+  """
   parser.add_argument('--output_train_name', type=str,
                       required=True,
                       help='Output train file name. Required.')
   parser.add_argument('--output_val_name', type=str,
                       required=True,
                       help='Output val file name. Required.')
+  """
   parser.add_argument('--num_epochs', type=int,
                       default=10,
                       help='Number of epochs to train for. Default value of 10.')
