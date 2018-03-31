@@ -69,9 +69,10 @@ def main(args):
     images = to_var(images, volatile=True)
     captions = to_var(captions, volatile=True)
     features = encoder(images)
-    caption, _ = decoder.sample(features, args.beam_size)
+    results = decoder.sample(features, args.beam_size)
     print("predicted captions are: ")
-    print(caption_id_to_string(caption, vocab))
+    for result in results:
+      print("score: " + str(result[0]) + ", caption: " + caption_id_to_string(result[1], vocab))
 
 if __name__ == '__main__':
   parser = argparse.ArgumentParser()
@@ -104,10 +105,10 @@ if __name__ == '__main__':
                       help='Saved checkpoint file name. Required')
   parser.add_argument('--num_runs', type=int,
                       default=10,
-                      help='Number of runs to go through. Default value of 5')
+                      help='Number of runs to go through. Default value of 10')
   parser.add_argument('--beam_size', type=int,
                       default=10,
-                      help='Size of beam to generate with. Default value of 5')
+                      help='Size of beam to generate with. Default value of 10')
 
   args = parser.parse_args()
   main(args)

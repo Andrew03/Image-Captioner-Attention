@@ -97,18 +97,61 @@ class DecoderRNN(nn.Module):
     return F.log_softmax(word_space, dim=1), F.softmax(word_space, dim=1)
 
   def sample(self, features, beam_size=1, start_token=0, end_token=1):
-    beam_size = 1
     hidden = self._init_hidden(features)
-    captions = []
-    caption = create_predict_input_captions([start_token], self.useCuda)
+    completed_phrases = []
+    best_phrases = []
     score = 0
-    for i in range(20):
-      embedding = self.embed(caption)
-      attention = self._compute_attention(features, hidden[0])
-      input = torch.cat([attention, embedding], 1).unsqueeze(1)
+
+    initial_caption = create_predict_input_captions([start_token], self.useCuda)
+    embedding = self.embed(initial_caption)
+    attention = self._compute_attention(features, hidden[0])
+    input = torch.cat([attention, embedding], 1).unsqueeze(1)
+    out, hidden = self.lstm(input, hidden)
+    words = self.output(out)
+    word_scores = F.softmax(words, dim=2)
+    top_scores, top_captions = word_scores.topk(beam_size)
+    best_phrases = [[top_scores[0][0].data[i], [top_captions[0][0].data[i]]] for i in range(beam_size)]
+    next_captions = top_captions.resize(beam_size, 1)
+    hidden = (hidden[0].repeat(1, beam_size, 1), hidden[1].repeat(1, beam_size, 1))
+
+    for index in range(20):
+      best_candidates = []
+      embedding = self.embed(next_captions)
+      attention = self._compute_attention(features, hidden[0]).unsqueeze(1)
+      input = torch.cat([attention, embedding], 2)
       out, hidden = self.lstm(input, hidden)
       words = self.output(out)
-      word_distribution = F.log_softmax(words, dim=2)
+      word_scores = F.softmax(words, dim=2)
+      top_scores, top_captions = word_scores.topk(beam_size)
+      len_phrases = len(best_phrases[0][1])
+      for i in range(len(best_phrases)):
+        for j in range(beam_size):
+          best_candidates.extend([[best_phrases[i][0] + top_scores[i][0].data[j],
+            best_phrases[i][1] + [top_captions[i][0].data[j]],
+            i]])
+      top_candidates = sorted(best_candidates, key=lambda score_caption: score_caption[0])[-beam_size:]
+      temp_candidates = []
+      for phrase in top_candidates:
+        if phrase[1][-1] == end_token:
+          completed_phrases.append([phrase[0] / len(phrase[1]), phrase[1]])
+        else:
+          temp_candidates.append(phrase)
+      top_candidates = temp_candidates
+      if len(completed_phrases) >= beam_size:
+        return sorted(completed_phrases, key=lambda score_caption: score_caption[0], reverse=True)[:beam_size]
+      best_phrases = [[phrase[0], phrase[1]] for phrase in top_candidates]
+      next_captions = create_predict_input_captions([[phrase[1][-1]] for phrase in top_candidates], self.useCuda)
+      hidden_0 = (torch.stack([hidden[0][0].select(0, phrase[2]) for phrase in top_candidates]).unsqueeze(0))
+      hidden_1 = (torch.stack([hidden[1][0].select(0, phrase[2]) for phrase in top_candidates]).unsqueeze(0))
+      hidden = (hidden_0, hidden_1)
+      """
+      hidden = (torch.cat((torch.stack([hidden[0][0].select(0, phrase[2]) for phrase in top_candidates]).unsqueeze(0), torch.stack([hidden[0][1].select(0, phrase[2]) for phrase in top_candidates]).unsqueeze(0)), 0),
+          torch.cat((torch.stack([hidden[1][0].select(0, phrase[2]) for phrase in top_candidates]).unsqueeze(0), torch.stack([hidden[1][1].select(0, phrase[2]) for phrase in top_candidates]).unsqueeze(0)), 0))
+      """
+    return sorted(completed_phrases, key=lambda score_caption: score_caption[0], reverse=True)[:beam_size]
+
+    """
+
       caption_score, caption_indices = word_distribution.topk(beam_size)
       next_caption = caption_indices[0][0].data[0]
       caption = create_predict_input_captions([next_caption], self.useCuda)
@@ -117,3 +160,4 @@ class DecoderRNN(nn.Module):
       if next_caption == end_token:
         break
     return captions, score
+    """
