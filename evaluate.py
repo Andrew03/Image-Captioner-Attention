@@ -5,6 +5,8 @@ import torchvision.transforms as transforms
 from torch.autograd import Variable
 import pickle
 import argparse
+import nltk
+from nltk.translate import bleu_score
 from torch.nn.utils.rnn import pack_padded_sequence
 from pycocotools.coco import COCO
 import model
@@ -16,6 +18,12 @@ def to_var(x, useCuda=True, volatile=False):
   if torch.cuda.is_available() and useCuda:
     x = x.cuda()
   return Variable(x, volatile=volatile)
+
+def caption_id_to_word(caption, vocab):
+  output = []
+  for word in caption:
+    output.append(vocab(word))
+  return output
 
 def caption_id_to_string(caption, vocab):
   output = ""
@@ -72,7 +80,11 @@ def main(args):
     results = decoder.sample(features, args.beam_size)
     print("predicted captions are: ")
     for result in results:
-      print("score: " + str(result[0]) + ", caption: " + caption_id_to_string(result[1], vocab))
+      candidate = [vocab(i) for i in result[1][:-1]]
+      references = [nltk.tokenize.word_tokenize(ann["caption"].lower()) for ann in anns]
+      score = bleu_score.sentence_bleu(references, candidate)
+      print("probability: %5.4f, BLEU score: %5.4f, caption: %s" %(result[0], score, caption_id_to_string(result[1], vocab)))
+      #print("probability: " + str(result[0]) + ", BLEU score: " + str(score) + ", caption: " + caption_id_to_string(result[1], vocab))
 
 if __name__ == '__main__':
   parser = argparse.ArgumentParser()

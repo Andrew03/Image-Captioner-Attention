@@ -54,6 +54,14 @@ class DecoderRNN(nn.Module):
     self.output = nn.Linear(hidden_dim, vocab_size)
 
   def _init_hidden(self, features):
+    """
+    for batch in features:
+      for feature_vec in batch:
+        feature_sum = torch.sum(feature_vec)
+        feature_vec /= feature_sum
+        feature_sum = torch.sum(feature_vec)
+        print(feature_sum)
+    """
     hidden = torch.sum(self.init_h(features), 1) / self.vis_num
     cell = torch.sum(self.init_c(features), 1) / self.vis_num
     return hidden.unsqueeze(0), cell.unsqueeze(0)
@@ -144,20 +152,4 @@ class DecoderRNN(nn.Module):
       hidden_0 = (torch.stack([hidden[0][0].select(0, phrase[2]) for phrase in top_candidates]).unsqueeze(0))
       hidden_1 = (torch.stack([hidden[1][0].select(0, phrase[2]) for phrase in top_candidates]).unsqueeze(0))
       hidden = (hidden_0, hidden_1)
-      """
-      hidden = (torch.cat((torch.stack([hidden[0][0].select(0, phrase[2]) for phrase in top_candidates]).unsqueeze(0), torch.stack([hidden[0][1].select(0, phrase[2]) for phrase in top_candidates]).unsqueeze(0)), 0),
-          torch.cat((torch.stack([hidden[1][0].select(0, phrase[2]) for phrase in top_candidates]).unsqueeze(0), torch.stack([hidden[1][1].select(0, phrase[2]) for phrase in top_candidates]).unsqueeze(0)), 0))
-      """
     return sorted(completed_phrases, key=lambda score_caption: score_caption[0], reverse=True)[:beam_size]
-
-    """
-
-      caption_score, caption_indices = word_distribution.topk(beam_size)
-      next_caption = caption_indices[0][0].data[0]
-      caption = create_predict_input_captions([next_caption], self.useCuda)
-      captions.append(next_caption)
-      score += caption_score
-      if next_caption == end_token:
-        break
-    return captions, score
-    """
